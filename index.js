@@ -1,6 +1,10 @@
+require('dotenv').config(); // Import dotenv to use environment variables
 const express = require('express');
 const path = require('path');
 const bodyParser = require('body-parser');
+const { Pool } = require('pg');
+const bcrypt = require('bcrypt');
+const saltRounds = 10; // Define salt rounds for bcrypt
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,103 +18,210 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Middleware to parse request body
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Initialize blog posts and categories arrays
-let blogPosts = [
-  {
-    id: 0,
-    title: "Understanding Cloud Computing",
-    name: "Charlie",
-    date: "08/28/2024 9:00 AM",
-    content: "Cloud computing offers businesses scalable and flexible computing resources, reducing costs and improving efficiency.",
-    category: "Tech"
-  },
-  {
-    id: 1,
-    title: "Healthy Lifestyle Tips",
-    name: "Bob",
-    date: "09/03/2024 2:45 PM",
-    content: "Maintaining a healthy lifestyle requires a balanced diet, regular exercise, and mental well-being practices.",
-    category: "Lifestyle"
-  },
-  {
-    id: 2,
-    title: "The Future of Tech",
-    name: "Alice",
-    date: "09/05/2024 10:30 AM",
-    content: "Technology is advancing faster than ever, with AI and machine learning paving the way for new innovations.",
-    category: "Tech"
+// Set up PostgreSQL connection pool using environment variables
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT,
+});
+
+// Middleware to track the logged-in user
+let currentUser = null;
+
+// Route to render the homepage with blog posts
+app.get('/', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM blogs');
+    res.render('index', {
+      blogTitle: 'Mini Project 1',
+      posts: result.rows,
+      currentUser: currentUser
+    });
+  } catch (err) {
+    console.error(err);
+    res.send('Error occurred while fetching blog posts');
   }
-];
+});
 
-let categories = ["Tech", "Lifestyle", "Education"];
+// Render signup page
+app.get('/signup', (req, res) => {
+  res.render('signup', { error: null });
+});
 
-// Function to format the date and time
-function formatDateTime() {
-  const now = new Date();
-  const date = now.toLocaleDateString(); 
-  const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-}
+// Handle user signup
+app.post('/signup', async (req, res) => {
+  const { user_id, password, name } = req.body;
+  try {
+    const userExist = await pool.query('SELECT * FROM users WHERE name = $1', [name]);
+    if (userExist.rows.length > 0) {
+      return res.render('signup', { error: 'User ID already taken. Please choose another one.' });
+    }
 
-// Route to render the main blog page
-app.get('/', (req, res) => {
-  res.render('index', {
-    blogTitle: 'Mini Project 1',
-    posts: blogPosts,
-    categories: categories
-  });
+    // Hash the password using bcrypt
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Insert the user with the hashed password
+    await pool.query('INSERT INTO users (name, password) VALUES ($1, $2)', [name, hashedPassword]);
+    res.redirect('/signin');
+  } catch (err) {
+    console.error(err);
+    res.send('Error occurred during signup');
+  }
+});
+
+// Render sign-in page
+app.get('/signin', (req, res) => {
+  res.render('signin', { error: null });
+});
+
+// Handle user sign-in
+app.post('/signin', async (req, res) => {
+  const { user_id, password } = req.body;
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE name = $1', [user_id]);
+    if (result.rows.length === 0) {
+      return res.render('signin', { error: 'Invalid User ID or Password.' });
+    }
+
+    const user = result.rows[0];
+
+    // Compare the provided password with the hashed password in the database
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.render('signin', { error: 'Invalid User ID or Password.' });
+    }
+
+    currentUser = user;
+    res.redirect('/');
+  } catch (err) {
+    console.error(err);
+    res.send('Error occurred during sign-in');
+  }
+});
+
+// Handle sign out
+app.get('/signout', (req, res) => {
+  currentUser = null;
+  res.redirect('/');
+});
+
+// Render account page for authenticated users
+app.get('/account', (req, res) => {
+  if (!currentUser) {
+    return res.redirect('/signin');
+  }
+  res.render('account', { currentUser: currentUser, error: null });
+});
+
+// Handle account update (change user ID and password)
+app.post('/account', async (req, res) => {
+  if (!currentUser) {
+    return res.redirect('/signin');
+  }
+  const { new_user_id, new_password } = req.body;
+
+  try {
+    // Check if the new user ID is already taken by someone else
+    const userExist = await pool.query('SELECT * FROM users WHERE name = $1', [new_user_id]);
+    if (userExist.rows.length > 0 && userExist.rows[0].user_id !== currentUser.user_id) {
+      return res.render('account', { currentUser: currentUser, error: 'User ID already taken. Please choose another one.' });
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
+
+    // Update the user's information in the database
+    await pool.query('UPDATE users SET name = $1, password = $2 WHERE user_id = $3', 
+                     [new_user_id, hashedPassword, currentUser.user_id]);
+
+    // Update currentUser in session
+    currentUser.name = new_user_id;
+    res.redirect('/');
+  } catch (err) {
+    console.error(err);
+    res.send('Error occurred while updating account');
+  }
 });
 
 // Route to handle new blog post submissions
-app.post('/add-post', (req, res) => {
-  const { title, content, category, name } = req.body;
-
-  // Add the new category if it doesn't exist already
-  if (!categories.includes(category)) {
-    categories.push(category);
+app.post('/add-post', async (req, res) => {
+  if (!currentUser) {
+    return res.redirect('/signin');
   }
-
-  // Create a new post
-  const newPost = {
-    // Assign a unique ID based on the array length
-    id: blogPosts.length,
-    title: title,
-    name: name,
-    date: formatDateTime(),
-    content: content,
-    category: category
-  };
-  // Add the new post to the blogPosts array
-  blogPosts.push(newPost);
-
-  res.redirect('/');
+  const { title, content, category } = req.body;
+  try {
+    await pool.query('INSERT INTO blogs (creator_name, creator_user_id, title, body) VALUES ($1, $2, $3, $4)', 
+                     [currentUser.name, currentUser.user_id, title, content]);
+    res.redirect('/');
+  } catch (err) {
+    console.error(err);
+    res.send('Error occurred while adding the blog post');
+  }
 });
 
-// Route to handle editing a blog post
-app.post('/edit-post/:id', (req, res) => {
+// Render the edit post page
+app.get('/edit-post/:id', async (req, res) => {
   const { id } = req.params;
-  const { title, content, name } = req.body;
-
-  // Find the post by ID and update
-  const post = blogPosts.find(post => post.id == id);
-  if (post) {
-    post.title = title;
-    post.content = content;
-    post.name = name;
-    post.date = formatDateTime(); 
+  if (!currentUser) {
+    return res.redirect('/signin');
   }
 
-  res.redirect('/');
+  try {
+    const result = await pool.query('SELECT * FROM blogs WHERE blog_id = $1 AND creator_user_id = $2', [id, currentUser.user_id]);
+    if (result.rows.length === 0) {
+      return res.send('You are not authorized to edit this post.');
+    }
+
+    res.render('edit-post', { post: result.rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.send('Error occurred while fetching the post.');
+  }
 });
+
+// Handle updating a post
+app.post('/edit-post/:id', async (req, res) => {
+  const { id } = req.params;
+  const { title, content } = req.body;
+
+  if (!currentUser) {
+    return res.redirect('/signin');
+  }
+
+  try {
+    const result = await pool.query('SELECT * FROM blogs WHERE blog_id = $1 AND creator_user_id = $2', [id, currentUser.user_id]);
+    if (result.rows.length === 0) {
+      return res.send('You are not authorized to edit this post.');
+    }
+
+    await pool.query('UPDATE blogs SET title = $1, body = $2 WHERE blog_id = $3', [title, content, id]);
+    res.redirect('/');
+  } catch (err) {
+    console.error(err);
+    res.send('Error occurred while updating the post.');
+  }
+});
+
 
 // Route to handle deleting a blog post
-app.get('/delete-post/:id', (req, res) => {
+app.get('/delete-post/:id', async (req, res) => {
   const { id } = req.params;
-
-  // Filter out the post with the given ID from the blogPosts array
-  blogPosts = blogPosts.filter(post => post.id != id);
-
-  res.redirect('/');
+  if (!currentUser) {
+    return res.redirect('/signin');
+  }
+  try {
+    const post = await pool.query('SELECT * FROM blogs WHERE blog_id = $1 AND creator_user_id = $2', [id, currentUser.user_id]);
+    if (post.rows.length === 0) {
+      return res.send('You are not authorized to delete this post.');
+    }
+    await pool.query('DELETE FROM blogs WHERE blog_id = $1', [id]);
+    res.redirect('/');
+  } catch (err) {
+    console.error(err);
+    res.send('Error occurred while deleting the blog post');
+  }
 });
 
 // Start the server

@@ -1,94 +1,53 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title><%= blogTitle %></title>
-  <link rel="stylesheet" href="/styles.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/styles.css">
+    <title><%= blogTitle %></title>
 </head>
 <body>
-  <header>
-    <h1><%= blogTitle %></h1>
-  </header>
-  <nav>
-    <a href="/">Home</a>
-  </nav>
-  <div class="container">
-    <!-- Category filter dropdown -->
-    <label for="categoryFilter">Filter by Category:</label>
-    <select id="categoryFilter" onchange="filterPosts(this.value)">
-      <option value="all">All Categories</option>
-      <% categories.forEach(function(category) { %>
-        <option value="<%= category %>"><%= category %></option>
-      <% }) %>
-    </select>
-
-    <!-- Form to add a new post -->
-    <form action="/add-post" method="post" class="post-form">
-      <label for="name">Name:</label>
-      <input type="text" id="name" name="name" required><br>
-      <label for="title">Title:</label>
-      <input type="text" id="title" name="title" required><br>
-      <label for="content">Content:</label>
-      <textarea id="content" name="content" required></textarea><br>
-      <label for="category">Category:</label>
-      <input type="text" id="category" name="category" placeholder="Add or select a category" list="category-list" required>
-      <datalist id="category-list">
-        <% categories.forEach(function(category) { %>
-          <option value="<%= category %>"><%= category %></option>
-        <% }) %>
-      </datalist><br>
-      <button type="submit">Add Post</button>
-    </form>
-
-    <!-- List of all posts, reversed order to show newest first -->
-    <ul id="posts-list">
-      <% posts.slice().reverse().forEach(function(post) { %>
-        <li class="<%= post.category %>" id="post-<%= post.id %>">
-          <form action="/edit-post/<%= post.id %>" method="post" style="display: none;" class="post-form">
-            <label for="edit-title-<%= post.id %>">Title:</label>
-            <input type="text" id="edit-title-<%= post.id %>" name="title" value="<%= post.title %>" required><br>
-            <label for="edit-name-<%= post.id %>">Name:</label>
-            <input type="text" id="edit-name-<%= post.id %>" name="name" value="<%= post.name %>" required><br>
-            <label for="edit-content-<%= post.id %>">Content:</label>
-            <textarea id="edit-content-<%= post.id %>" name="content" required><%= post.content %></textarea><br>
-            <button type="submit">Save Changes</button>
-            <button type="button" onclick="toggleEdit(<%= post.id %>, false)">Cancel</button>
-          </form>
-          <div class="post-content">
-            <h2><%= post.title %></h2>
-            <p><%= post.content %></p>
-            <small>Posted by <strong><%= post.name %></strong> on <%= post.date %> | Category: <%= post.category %></small>
-            <div class="post-actions">
-              <button onclick="toggleEdit(<%= post.id %>, true)">Edit</button>
-              <a href="/delete-post/<%= post.id %>">Delete</a>
+    <div class="container">
+        <header>
+            <h1><%= blogTitle %></h1>
+            <div class="auth-links">
+                <% if (currentUser) { %>
+                    <p>Welcome, <%= currentUser.name %>! <a href="/account">Account Settings</a> | <a href="/signout">Sign out</a></p>
+                <% } else { %>
+                    <a href="/signin">Sign in</a> | <a href="/signup">Sign up</a>
+                <% } %>
             </div>
-          </div>
-        </li>
-      <% }) %>
-    </ul>
-  </div>
+        </header>
 
-  <script>
-    function toggleEdit(postId, isEditing) {
-      const form = document.querySelector('#post-' + postId + ' form');
-      const displayDiv = document.querySelector('#post-' + postId + ' .post-content');
+        <section class="blog-posts">
+            <h2>Blog Posts</h2>
+            <ul class="post-list">
+                <% posts.forEach(function(post) { %>
+                    <li class="post-item">
+                        <h3 class="post-title"><%= post.title %></h3>
+                        <p class="post-content"><%= post.body %></p>
+                        <small class="post-meta">By: <%= post.creator_name %> on <%= post.date_created %></small>
+                        <div class="post-actions">
+                            <% if (currentUser && currentUser.user_id === post.creator_user_id) { %>
+                                <a href="/edit-post/<%= post.blog_id %>" class="edit-link">Edit</a>
+                                <a href="/delete-post/<%= post.blog_id %>" class="delete-link">Delete</a>
+                            <% } %>
+                        </div>
+                    </li>
+                <% }) %>
+            </ul>
+        </section>
 
-      if (isEditing) {
-        form.style.display = 'block';
-        displayDiv.style.display = 'none';
-      } else {
-        form.style.display = 'none';
-        displayDiv.style.display = 'block';
-      }
-    }
-
-    function filterPosts(category) {
-      const posts = document.querySelectorAll('#posts-list li');
-      posts.forEach(post => {
-        post.style.display = (category === 'all' || post.classList.contains(category)) ? '' : 'none';
-      });
-    }
-  </script>
+        <% if (currentUser) { %>
+        <section class="post-form-section">
+            <h3>Create a New Blog Post</h3>
+            <form action="/add-post" method="POST" class="post-form">
+                <input type="text" name="title" placeholder="Post Title" class="form-input" required>
+                <textarea name="content" placeholder="Post Content" rows="6" class="form-textarea" required></textarea>
+                <button type="submit" class="form-button">Submit</button>
+            </form>
+        </section>
+        <% } %>
+    </div>
 </body>
 </html>
